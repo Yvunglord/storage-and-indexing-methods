@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, feature/gin ]
+  pull_request:
+    branches: [ master, feature/gin ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    env:
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: gutenberg_search
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
