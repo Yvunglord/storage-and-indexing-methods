@@ -1,1 +1,2 @@
-## Репозиторий с выполненными домашними заданиями по дисциплине "Методы хранения и индексирования"
+## Сравнение производительности полнотекстового поиска в PostgreSQL с использованием GIN индексов и традиционных методов.
+Полный отчет в [Notebook](https://github.com/Yvunglord/storage-and-indexing-methods/blob/feature/gin/notebooks/full_text_search_analysis.ipynb)
