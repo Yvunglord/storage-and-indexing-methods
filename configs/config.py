@@ -1,12 +1,34 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+class DBConfig:
+    def __init__(self, host, port, dbname, user, password):
+        self.host = host
+        self.port = port
+        self.dbname = dbname
+        self.user = user
+        self.password = password
+    
+    def to_dict(self):
+        return {
+            'host': self.host,
+            'port': self.port,
+            'dbname': self.dbname,
+            'user': self.user,
+            'password': self.password
+        }
 
-DB_CONFIG = {
-    'dbname': os.getenv('POSTGRES_DB'),
-    'user': os.getenv('POSTGRES_USER'),
-    'password': os.getenv('POSTGRES_PASSWORD'),
-    'host': os.getenv('POSTGRES_HOST'),
-    'port': os.getenv('POSTGRES_PORT')
-}
+DB_NO_INDEX = DBConfig(
+    host='postgres-no-index',
+    port=5432,
+    dbname=os.getenv('POSTGRES_DB'),
+    user=os.getenv('POSTGRES_USER'),
+    password=os.getenv('POSTGRES_PASSWORD')
+)
+
+DB_WITH_INDEX = DBConfig(
+    host='postgres-with-index', 
+    port=5432,
+    dbname=os.getenv('POSTGRES_DB'),
+    user=os.getenv('POSTGRES_USER'),
+    password=os.getenv('POSTGRES_PASSWORD')
+)

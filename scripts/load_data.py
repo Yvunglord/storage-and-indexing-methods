@@ -1,241 +1,142 @@
-import psycopg2
-import requests
-import re
+import sys
+import os
 import time
-import concurrent.futures
-from urllib.parse import urljoin
-from bs4 import BeautifulSoup
-import threading
-from queue import Queue
-from configs.config import DB_CONFIG
+
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(project_root)
+
+from configs.config import DB_NO_INDEX, DB_WITH_INDEX
+import pandas as pd
+import psycopg2
+from tqdm import tqdm
 import psycopg2.extras
 
-MAX_WORKERS = 10
-BATCH_SIZE = 50
-REQUEST_TIMEOUT = 15
-MAX_BOOK_SIZE = 300000
-
-batch_queue = Queue()
-batch_lock = threading.Lock()
-current_batch = []
-
-def get_book_metadata_fast(gutenberg_id):
-    try:
-        rdf_url = f"https://www.gutenberg.org/ebooks/{gutenberg_id}.rdf"
-        response = requests.get(rdf_url, timeout=REQUEST_TIMEOUT)
-        
-        if response.status_code != 200:
-            return f"Book {gutenberg_id}", "Unknown", "en"
-        
-        if '<dcterms:title>' not in response.text:
-            return f"Book {gutenberg_id}", "Unknown", "en"
-            
-        title = f"Book {gutenberg_id}"
-        author = "Unknown"
-        language_code = "en"
-        
-        title_match = re.search(r'<dcterms:title[^>]*>(.*?)</dcterms:title>', response.text)
-        if title_match:
-            title = title_match.group(1).strip()
-        
-        name_match = re.search(r'<pgterms:name[^>]*>(.*?)</pgterms:name>', response.text)
-        if name_match:
-            author = name_match.group(1).strip()
-        
-        lang_match = re.search(r'<rdf:value[^>]*>([a-z]{2,3})</rdf:value>', response.text)
-        if lang_match:
-            lang = lang_match.group(1).lower()
-            language_code = lang[:2]
-        
-        return title, author, language_code
-        
-    except Exception as e:
-        return f"Book {gutenberg_id}", "Unknown", "en"
-
-def download_book_fast(gutenberg_id):
-    url_patterns = [
-        f"https://www.gutenberg.org/files/{gutenberg_id}/{gutenberg_id}-0.txt",
-        f"https://www.gutenberg.org/files/{gutenberg_id}/{gutenberg_id}.txt",
-        f"https://www.gutenberg.org/cache/epub/{gutenberg_id}/pg{gutenberg_id}.txt",
-    ]
-    
-    for url in url_patterns:
+def wait_for_db(db_config, max_retries=30, retry_interval=5):
+    """Ожидание готовности базы данных"""
+    print(f"Ожидание подключения к {db_config.host}...")
+    for i in range(max_retries):
         try:
-            response = requests.get(url, timeout=REQUEST_TIMEOUT, stream=True)
-            
-            if response.status_code == 200:
-                content = []
-                total_size = 0
-                
-                for chunk in response.iter_content(chunk_size=16384, decode_unicode=True):
-                    if chunk:
-                        content.append(chunk)
-                        total_size += len(chunk)
-                        
-                        if total_size > 500000:
-                            break
-                
-                text_content = ''.join(content)
-                if len(text_content) > 5000: 
-                    return clean_gutenberg_content_fast(text_content)
-                    
-        except Exception:
-            continue
-    
-    return None
+            conn = psycopg2.connect(**db_config.to_dict())
+            conn.close()
+            print(f"✅ Успешное подключение к {db_config.host}")
+            return True
+        except psycopg2.OperationalError as e:
+            if i < max_retries - 1:
+                print(f"⏳ Попытка {i+1}/{max_retries} не удалась: {e}. Повтор через {retry_interval} сек...")
+                time.sleep(retry_interval)
+            else:
+                print(f"❌ Не удалось подключиться к {db_config.host} после {max_retries} попыток")
+                return False
+    return False
 
-def clean_gutenberg_content_fast(text, max_length=MAX_BOOK_SIZE):
-    start_markers = ['*** START OF', '***START OF']
-    end_markers = ['*** END OF', '***END OF']
-    
-    start_pos = 0
-    for marker in start_markers:
-        pos = text.find(marker)
-        if pos != -1:
-            start_pos = text.find('\n', pos)
-            if start_pos != -1:
-                break
-    
-    end_pos = len(text)
-    for marker in end_markers:
-        pos = text.find(marker)
-        if pos != -1:
-            end_pos = pos
-            break
-    
-    if start_pos > 0:
-        text = text[start_pos:end_pos]
-    
-    if len(text) > max_length:
-        text = text[:max_length]
-    
-    return text.strip()
+def create_table(cursor):
+    """Создание таблицы без индексов"""
+    create_table_query = """
+        DROP TABLE IF EXISTS reviews;
+        CREATE TABLE reviews (
+            user_id VARCHAR(50),
+            product_id VARCHAR(50),
+            rating DECIMAL,
+            timestamp BIGINT
+        );
+    """
+    cursor.execute(create_table_query)
 
-def process_book_batch(cursor, batch):
-    if not batch:
-        return
+def process_reviews_chunk(cursor, chunk):
+    if chunk.empty:
+        return 0
     
     try:
+        data_tuples = [
+            (row['user_id'], row['product_id'], row['rating'], row['timestamp'])
+            for _, row in chunk.iterrows()
+        ]
+        
         insert_query = """
-            INSERT INTO books (gutenberg_id, title, author, language_code, content) 
+            INSERT INTO reviews (user_id, product_id, rating, timestamp) 
             VALUES %s
         """
         
         psycopg2.extras.execute_values(
             cursor, 
             insert_query, 
-            batch,
-            template="(%s, %s, %s, %s, %s)",
-            page_size=BATCH_SIZE
+            data_tuples,
+            template="(%s, %s, %s, %s)",
+            page_size=1000
         )
-        return len(batch)
+        return len(data_tuples)
+        
     except Exception as e:
         print(f"Ошибка при вставке пачки: {e}")
         return 0
 
-def process_single_book(gutenberg_id):
-    if gutenberg_id in [0]:
-        return None
-    
-    content = download_book_fast(gutenberg_id)
-    if not content:
-        return None
-    
-    title, author, language_code = get_book_metadata_fast(gutenberg_id)
-    
-    return (gutenberg_id, title, author, language_code, content)
-
-def worker_book_processor(book_ids, results_queue, progress_queue):
-    for book_id in book_ids:
-        try:
-            result = process_single_book(book_id)
-            if result:
-                results_queue.put(result)
-            progress_queue.put(1)
-        except Exception as e:
-            print(f"Ошибка в воркере для книги {book_id}: {e}")
-            progress_queue.put(0)
-
-def main():
-    db_params = DB_CONFIG
-    
+def load_data_to_db(db_config, db_name):
+    """Загрузка данных в конкретную БД"""
     try:
-        conn = psycopg2.connect(**db_params)
+        # Ждем готовности БД
+        if not wait_for_db(db_config):
+            return
+        
+        conn = psycopg2.connect(**db_config.to_dict())
         cursor = conn.cursor()
         
-        print(f"Запуск ускоренной загрузки с {MAX_WORKERS} потоками...")
+        print(f"Создание таблицы для {db_name}...")
+        create_table(cursor)
+        conn.commit()
         
-        start_id = 1
-        end_id = 70000
+        print(f"Начало загрузки данных в {db_name}...")
         
-        all_ids = list(range(start_id, end_id + 1))
-        chunk_size = len(all_ids) // MAX_WORKERS + 1
-        chunks = [all_ids[i:i + chunk_size] for i in range(0, len(all_ids), chunk_size)]
+        chunksize = 100_000
         
-        results_queue = Queue()
-        progress_queue = Queue()
+        # Подсчет общего количества чанков
+        total_rows = 0
+        try:
+            with pd.read_csv("data/amazon_reviews.csv", 
+                            sep=',',
+                            chunksize=chunksize,
+                            header=None,
+                            names=['user_id', 'product_id', 'rating', 'timestamp']) as reader:
+                for chunk in reader:
+                    total_rows += len(chunk)
+        except Exception as e:
+            print(f"Ошибка при чтении файла: {e}")
+            return
         
-        successful_downloads = 0
-        processed_books = 0
-        total_books = len(all_ids)
+        print(f"Всего строк для загрузки: {total_rows}")
         
-        batch_data = []
-        last_commit_time = time.time()
+        chunk_reader = pd.read_csv("data/amazon_reviews.csv",
+                                  sep=',', 
+                                  chunksize=chunksize,
+                                  header=None,
+                                  names=['user_id', 'product_id', 'rating', 'timestamp'])
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_to_chunk = {
-                executor.submit(worker_book_processor, chunk, results_queue, progress_queue): chunk 
-                for chunk in chunks
-            }
-            
-            while processed_books < total_books:
-                try:
-                    while not progress_queue.empty():
-                        progress_queue.get_nowait()
-                        processed_books += 1
-                        
-                        if processed_books % 100 == 0:
-                            print(f"Обработано: {processed_books}/{total_books} ({processed_books/total_books*100:.1f}%)")
-                except:
-                    pass
-                
-                try:
-                    while not results_queue.empty():
-                        book_data = results_queue.get_nowait()
-                        batch_data.append(book_data)
-                        successful_downloads += 1
-                except:
-                    pass
-                
-                current_time = time.time()
-                if (len(batch_data) >= BATCH_SIZE or 
-                    (current_time - last_commit_time > 10 and batch_data)):
-                    
-                    inserted = process_book_batch(cursor, batch_data)
-                    if inserted:
-                        conn.commit()
-                        print(f"✓ Вставлено {inserted} книг (всего: {successful_downloads})")
-                    
-                    batch_data = []
-                    last_commit_time = current_time
-                
-                time.sleep(0.1)
-            
-            if batch_data:
-                inserted = process_book_batch(cursor, batch_data)
-                if inserted:
-                    conn.commit()
-                    print(f"✓ Финальная вставка {inserted} книг")
+        successful_inserts = 0
         
-        print(f"\nЗагрузка завершена! Успешно: {successful_downloads} книг")
+        for chunk in tqdm(chunk_reader, total=total_rows/chunksize, desc=f"Загрузка в {db_name}"):
+            inserted = process_reviews_chunk(cursor, chunk)
+            successful_inserts += inserted
+            conn.commit()
+        
+        print(f"✅ Загрузка в {db_name} завершена! Успешно загружено: {successful_inserts} записей")
         
     except Exception as e:
-        print(f"Критическая ошибка: {e}")
-    finally:
+        print(f"❌ Критическая ошибка при загрузке в {db_name}: {e}")
         if 'conn' in locals():
+            conn.rollback()
+    finally:
+        if 'cursor' in locals():
             cursor.close()
+        if 'conn' in locals():
             conn.close()
 
+def main():
+    print("🚀 Начало загрузки данных в базы данных...")
+    
+    # Загрузка в обе БД (обе без индексов изначально)
+    load_data_to_db(DB_NO_INDEX, 'no_index')
+    load_data_to_db(DB_WITH_INDEX, 'with_index')
+    
+    print("✅ Все данные успешно загружены!")
 
 if __name__ == "__main__":
     main()
