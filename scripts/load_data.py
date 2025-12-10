@@ -12,25 +12,23 @@ from tqdm import tqdm
 import psycopg2.extras
 
 def wait_for_db(db_config, max_retries=30, retry_interval=5):
-    """Ожидание готовности базы данных"""
     print(f"Ожидание подключения к {db_config.host}...")
     for i in range(max_retries):
         try:
             conn = psycopg2.connect(**db_config.to_dict())
             conn.close()
-            print(f"✅ Успешное подключение к {db_config.host}")
+            print(f"Успешное подключение к {db_config.host}")
             return True
         except psycopg2.OperationalError as e:
             if i < max_retries - 1:
-                print(f"⏳ Попытка {i+1}/{max_retries} не удалась: {e}. Повтор через {retry_interval} сек...")
+                print(f"Попытка {i+1}/{max_retries} не удалась: {e}. Повтор через {retry_interval} сек...")
                 time.sleep(retry_interval)
             else:
-                print(f"❌ Не удалось подключиться к {db_config.host} после {max_retries} попыток")
+                print(f"Не удалось подключиться к {db_config.host} после {max_retries} попыток")
                 return False
     return False
 
 def create_table(cursor):
-    """Создание таблицы без индексов"""
     create_table_query = """
         DROP TABLE IF EXISTS reviews;
         CREATE TABLE reviews (
@@ -71,9 +69,7 @@ def process_reviews_chunk(cursor, chunk):
         return 0
 
 def load_data_to_db(db_config, db_name):
-    """Загрузка данных в конкретную БД"""
     try:
-        # Ждем готовности БД
         if not wait_for_db(db_config):
             return
         
@@ -88,7 +84,6 @@ def load_data_to_db(db_config, db_name):
         
         chunksize = 100_000
         
-        # Подсчет общего количества чанков
         total_rows = 0
         try:
             with pd.read_csv("data/amazon_reviews.csv", 
@@ -117,10 +112,10 @@ def load_data_to_db(db_config, db_name):
             successful_inserts += inserted
             conn.commit()
         
-        print(f"✅ Загрузка в {db_name} завершена! Успешно загружено: {successful_inserts} записей")
+        print(f"Загрузка в {db_name} завершена! Успешно загружено: {successful_inserts} записей")
         
     except Exception as e:
-        print(f"❌ Критическая ошибка при загрузке в {db_name}: {e}")
+        print(f"Критическая ошибка при загрузке в {db_name}: {e}")
         if 'conn' in locals():
             conn.rollback()
     finally:
@@ -130,13 +125,12 @@ def load_data_to_db(db_config, db_name):
             conn.close()
 
 def main():
-    print("🚀 Начало загрузки данных в базы данных...")
+    print("Начало загрузки данных в базы данных...")
     
-    # Загрузка в обе БД (обе без индексов изначально)
     load_data_to_db(DB_NO_INDEX, 'no_index')
     load_data_to_db(DB_WITH_INDEX, 'with_index')
     
-    print("✅ Все данные успешно загружены!")
+    print("Все данные успешно загружены!")
 
 if __name__ == "__main__":
     main()
