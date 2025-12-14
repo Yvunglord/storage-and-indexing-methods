@@ -1,17 +1,14 @@
-version: '3.8'
 services:
-  postgis:
-    image: postgis/postgis:15-3.4
-    container_name: task4-postgis
+  db:
+    image: postgres:16-alpine
+    container_name: wal-learning
     environment:
-      POSTGRES_DB: geom_database
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 10_QWERTy
-    ports:
-      - "5433:5432"
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=10_QWERTy
     volumes:
-      - postgis_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+      - ./data:/data:ro
 volumes:
-  postgis_data:
+  pgdata:
+
