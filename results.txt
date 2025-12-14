@@ -1,13 +1,144 @@
-Сколько WAL файлов было создано в /tmp/wal_archive/?
-Обычно в архиве появляется несколько WAL-файлов (по ~16 МБ каждый).
-После выполнения команды SELECT pg_switch_wal() дважды и вставки данных должно быть как минимум 2 новых файла в архиве. Точное количество зависит от активности системы и настройки archive_timeout.
+1.1
+POST kibana_sample_data_ecommerce/_doc
+{
+  "order_id": 999999,
+  "customer_first_name": "Ivan",
+  "customer_last_name": "Petrov",
+  "products": [
+    {
+      "product_name": "Test Product",
+      "price": 50.0
+    }
+  ],
+  "order_date": "2025-01-01T10:00:00",
+  "total_price": 50.0,
+  "currency": "EUR",
+  "customer_gender": "MALE"
+}
 
-Какой размер базового backup в /tmp/pg_backup/?
-Размер базового backup обычно составляет 40–50 МБ (примерно, в зависимости от версии PostgreSQL и наличия дополнительных данных).
+GET kibana_sample_data_ecommerce/_doc/K0L8HJsB1g6yrieuSBav
 
-Как PostgreSQL определил, до какого момента восстанавливать данные?
-PostgreSQL восстановил данные до момента, указанного в параметре recovery_target_time, который был задан в файле postgresql.auto.conf. Восстановление останавливается перед выполнением операции DROP TABLE, так как было выбрано время перед удалением таблицы.
+{
+  "_index": "kibana_sample_data_ecommerce",
+  "_id": "K0L8HJsB1g6yrieuSBav",
+  "_version": 1,
+  "_seq_no": 4675,
+  "_primary_term": 1,
+  "found": true,
+  "_source": {
+    "order_id": 999999,
+    "customer_first_name": "Ivan",
+    "customer_last_name": "Petrov",
+    "products": [
+      {
+        "product_name": "Test Product",
+        "price": 50
+      }
+    ],
+    "order_date": "2025-01-01T10:00:00",
+    "total_price": 50,
+    "currency": "EUR",
+    "customer_gender": "MALE"
+  }
+}
 
-Что произойдет, если указать recovery_target_time после DROP TABLE?
-Если указать время после выполнения DROP TABLE, то восстановление будет включать эту операцию, и таблица users не будет восстановлена. Вместо этого будет восстановлено состояние базы данных после удаления таблицы.
+POST kibana_sample_data_ecommerce/_update/K0L8HJsB1g6yrieuSBav
+{
+  "doc": {
+    "customer_first_name": "Sergey"
+  }
+}
 
+DELETE kibana_sample_data_ecommerce/_doc/K0L8HJsB1g6yrieuSBav
+
+1.2
+GET kibana_sample_data_ecommerce/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "dress hat",
+      "fields": ["products.product_name"],
+      "operator": "or"
+    }
+  }
+}
+
+1.3
+GET kibana_sample_data_ecommerce/_search
+{
+  "query": {
+    "term": {
+      "customer_gender": {
+        "value": "MALE"
+      }
+    }
+  }
+}
+
+GET kibana_sample_data_ecommerce/_search
+{
+  "query": {
+    "match": {
+      "customer_gender": "MALE"
+    }
+  }
+}
+
+1.4
+GET kibana_sample_data_ecommerce/_search
+{
+  "query": {
+    "match": {
+      "products.product_name": {
+        "query": "dres",
+        "fuzziness": "AUTO"
+      }
+    }
+  }
+}
+
+1.5
+GET kibana_sample_data_ecommerce/_search
+{
+  "query": {
+    "range": {
+      "total_price": {
+        "gte": 100,
+        "lte": 200
+      }
+    }
+  }
+}
+
+1.6
+GET kibana_sample_data_ecommerce/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match": {
+            "category": "Women's Clothing"
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "terms": {
+            "geoip.country_iso_code": ["US", "GB"]
+          }
+        }
+      ],
+      "should": [
+        {
+          "range": {
+            "total_price": {
+              "gt": 100
+            }
+          }
+        }
+      ],
+      "minimum_should_match": 1
+    }
+  }
+}

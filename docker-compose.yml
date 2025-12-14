@@ -1,14 +1,36 @@
-services:
-  db:
-    image: postgres:16-alpine
-    container_name: wal-learning
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=10_QWERTy
-    volumes:
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
-      - pgdata:/var/lib/postgresql/data
-      - ./data:/data:ro
-volumes:
-  pgdata:
+version: '3.8'
 
+services:
+  elasticsearch:
+    image: elasticsearch:9.2.1
+    container_name: es01
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    mem_limit: 4g
+    ports:
+      - "9200:9200"
+    networks:
+      - elastic
+
+  kibana:
+    image: kibana:9.2.1
+    container_name: kib01
+    environment:
+      - ELASTICSEARCH_HOSTS=http://es01:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - elastic
+
+networks:
+  elastic:
+    driver: bridge
