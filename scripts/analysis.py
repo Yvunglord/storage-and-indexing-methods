@@ -105,7 +105,7 @@ class QueryAnalyzer:
 
     def task1_queries(self):
         query = "SELECT * FROM reviews WHERE user_id = 'A2CX7LUOHB2NDG'"
-        index_sql = "CREATE INDEX idx_user_id ON reviews(user_id)"
+        index_sql = "CREATE INDEX IF NOT EXISTS idx_reviews_user_id ON reviews USING btree (user_id);"
         drop_index_sql = "DROP INDEX IF EXISTS idx_user_id"
         
         result_no_index = self._execute_with_explain(
@@ -128,8 +128,8 @@ class QueryAnalyzer:
         }
 
     def task2_queries(self):
-        query = "SELECT * FROM reviews WHERE user_id = 'A2CX7LUOHB2NDG' ORDER BY timestamp DESC"
-        index_sql = "CREATE INDEX idx_user_timestamp ON reviews(user_id, timestamp DESC)"
+        query = "SELECT * FROM reviews WHERE user_id = 'A2CX7LUOHB2NDG' ORDER BY time_unix DESC LIMIT 100"
+        index_sql = "CREATE INDEX IF NOT EXISTS idx_reviews_user_time ON reviews USING btree (user_id, time_unix DESC);"
         drop_index_sql = "DROP INDEX IF EXISTS idx_user_timestamp"
         
         result_no_index = self._execute_with_explain(
@@ -152,8 +152,8 @@ class QueryAnalyzer:
         }
 
     def task3_queries(self):
-        query = "SELECT rating, COUNT(*) as count FROM reviews GROUP BY rating ORDER BY rating"
-        index_sql = "CREATE INDEX idx_task3_rating ON reviews(rating)"
+        query = "SELECT score, COUNT(*) as count FROM reviews GROUP BY score ORDER BY score"
+        index_sql = "CREATE INDEX IF NOT EXISTS idx_reviews_user_time_pair ON reviews USING btree (user_id, time_unix);"
         drop_index_sql = "DROP INDEX IF EXISTS idx_task3_rating"
         
         result_no_index = self._execute_with_explain(
@@ -176,8 +176,10 @@ class QueryAnalyzer:
         }
 
     def task4_queries(self):
-        query = "SELECT * FROM reviews WHERE rating <= 2.0"
-        index_sql = "CREATE INDEX idx_low_ratings ON reviews(rating) WHERE rating <= 2.0 "
+        query = "SELECT product_id, count(*) FROM reviews WHERE score <= 2 GROUP BY product_id ORDER BY count(*) DESC LIMIT 50"
+        index_sql = """CREATE INDEX IF NOT EXISTS idx_reviews_low_score
+                    ON reviews USING btree (score)
+                    WHERE score <= 2;"""
         drop_index_sql = "DROP INDEX IF EXISTS idx_low_ratings"
         
         result_no_index = self._execute_with_explain(
@@ -201,7 +203,8 @@ class QueryAnalyzer:
 
     def task5_queries(self):
         query = "SELECT * FROM reviews WHERE user_id ILIKE 'a1qgnmc6o1vw39'"
-        index_sql = "CREATE INDEX idx_user_id_lower ON reviews(LOWER(user_id))"
+        index_sql = """CREATE INDEX IF NOT EXISTS idx_reviews_lower_user_id
+                       ON reviews USING btree (lower(user_id));"""
         drop_index_sql = "DROP INDEX IF EXISTS idx_user_id_lower"
         
         result_no_index = self._execute_with_explain(
@@ -224,12 +227,10 @@ class QueryAnalyzer:
         }
 
     def task6_queries(self):
-        query = """SELECT rating, COUNT(*), ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM reviews), 2) as percent
-                    FROM reviews 
-                    GROUP BY rating 
-                    ORDER BY rating
+        query = """SELECT * FROM reviews 
+                    WHERE score = 5.0;
                     """
-        index_sql = "CREATE INDEX idx_reviews_low_selectivity ON reviews(user_id)"
+        index_sql = "CREATE INDEX IF NOT EXISTS idx_reviews_score ON reviews USING btree (score);"
         drop_index_sql = "DROP INDEX IF EXISTS idx_task6_product_rating"
         
         result_no_index = self._execute_with_explain(
@@ -243,42 +244,6 @@ class QueryAnalyzer:
         
         return {
             'task': 'Низкая селективность',
-            'time_without_index': result_no_index['time'],
-            'time_with_index': result_with_index['time'],
-            'count_without_index': result_no_index['count'],
-            'count_with_index': result_with_index['count'],
-            'plan_without_index': result_no_index['plan'],
-            'plan_with_index': result_with_index['plan']
-        }
-
-    def task7_queries(self):
-        query = """SELECT 
-                    user_id,
-                    COUNT(*) as total_reviews,
-                    AVG(rating) as avg_rating,
-                    COUNT(CASE WHEN rating <= 2.0 THEN 1 END) as low_ratings_count
-                FROM reviews 
-                GROUP BY user_id 
-                HAVING COUNT(*) > 100 AND AVG(rating) < 2.5
-                ORDER BY low_ratings_count DESC;"""
-        index_sql = """CREATE INDEX idx_reviews_user_rating ON reviews(user_id, rating);
-                       CREATE INDEX idx_reviews_rating ON reviews(rating);
-                    """
-        drop_index_sql = """DROP INDEX IF EXISTS idx_reviews_user_rating;
-                            DROP INDEX IF EXISTS idx_reviews_rating;
-        """
-        
-        result_no_index = self._execute_with_explain(
-            self.db_manager.db_no_index, query
-        )
-        
-        result_with_index = self._execute_with_explain(
-            self.db_manager.db_with_index, query, 
-            with_index=True, index_sql=index_sql, drop_index_sql=drop_index_sql
-        )
-        
-        return {
-            'task': 'Пользователи с большим количеством низких оценок',
             'time_without_index': result_no_index['time'],
             'time_with_index': result_with_index['time'],
             'count_without_index': result_no_index['count'],

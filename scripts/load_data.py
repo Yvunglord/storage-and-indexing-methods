@@ -32,26 +32,28 @@ def create_table(cursor):
     create_table_query = """
         DROP TABLE IF EXISTS reviews;
         CREATE TABLE reviews (
-            user_id VARCHAR(50),
-            product_id VARCHAR(50),
-            rating DECIMAL,
-            timestamp BIGINT
+            review_id BIGSERIAL PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            product_id TEXT NOT NULL,
+            score REAL NOT NULL,
+            time_unix BIGINT NOT NULL
         );
     """
     cursor.execute(create_table_query)
 
 def process_reviews_chunk(cursor, chunk):
+    """Обработка и вставка чанка данных"""
     if chunk.empty:
         return 0
     
     try:
         data_tuples = [
-            (row['user_id'], row['product_id'], row['rating'], row['timestamp'])
+            (row['user_id'], row['product_id'], row['score'], row['time_unix'])
             for _, row in chunk.iterrows()
         ]
         
         insert_query = """
-            INSERT INTO reviews (user_id, product_id, rating, timestamp) 
+            INSERT INTO reviews (user_id, product_id, score, time_unix) 
             VALUES %s
         """
         
@@ -69,6 +71,7 @@ def process_reviews_chunk(cursor, chunk):
         return 0
 
 def load_data_to_db(db_config, db_name):
+    """Загрузка данных в указанную базу данных"""
     try:
         if not wait_for_db(db_config):
             return
@@ -90,7 +93,7 @@ def load_data_to_db(db_config, db_name):
                             sep=',',
                             chunksize=chunksize,
                             header=None,
-                            names=['user_id', 'product_id', 'rating', 'timestamp']) as reader:
+                            names=['user_id', 'product_id', 'score', 'time_unix']) as reader:
                 for chunk in reader:
                     total_rows += len(chunk)
         except Exception as e:
@@ -103,7 +106,7 @@ def load_data_to_db(db_config, db_name):
                                   sep=',', 
                                   chunksize=chunksize,
                                   header=None,
-                                  names=['user_id', 'product_id', 'rating', 'timestamp'])
+                                  names=['user_id', 'product_id', 'score', 'time_unix'])
         
         successful_inserts = 0
         
@@ -113,6 +116,10 @@ def load_data_to_db(db_config, db_name):
             conn.commit()
         
         print(f"Загрузка в {db_name} завершена! Успешно загружено: {successful_inserts} записей")
+        
+        cursor.execute("SELECT COUNT(*) FROM reviews;")
+        count = cursor.fetchone()[0]
+        print(f"Проверка: в таблице {db_name} находится {count} записей")
         
     except Exception as e:
         print(f"Критическая ошибка при загрузке в {db_name}: {e}")
@@ -125,6 +132,7 @@ def load_data_to_db(db_config, db_name):
             conn.close()
 
 def main():
+    """Основная функция"""
     print("Начало загрузки данных в базы данных...")
     
     load_data_to_db(DB_NO_INDEX, 'no_index')
