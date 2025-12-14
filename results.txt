@@ -1,0 +1,148 @@
+(venv) egor@DESKTOP-JIO1GM9:~/education/python/storage-and-indexing-methods$ python3 ./homework_tasks.py
+Spatial Indexing Homework Tasks
+================================================================================
+Running queries exactly as specified in homework.pdf
+Connected to database
+Found 100000 cafes in database
+
+================================================================================
+TASK 1: Spatial Search with and without Index
+================================================================================
+Dropping indexes if they exist...
+
+Step 1: Search cafes in rectangle WITHOUT index
+
+Search cafes in rectangle WITHOUT index
+Query: 
+    SELECT id, name,
+           ST_X(geom) as longitude,
+           ST_Y(geom) ...
+Execution time: 0.2765 seconds
+Rows returned: 16832
+
+EXPLAIN ANALYZE for search WITHOUT index
+Execution Plan:
+   Seq Scan on cafes  (cost=0.00..1250680.93 rows=16899 width=34) (actual time=29.839..47.587 rows=16832 loops=1)
+     Filter: st_within(geom, '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
+     Rows Removed by Filter: 83168
+   Planning Time: 0.105 ms
+   JIT:
+     Functions: 4
+     Options: Inlining true, Optimization true, Expressions true, Deforming true
+     Timing: Generation 0.246 ms, Inlining 1.057 ms, Optimization 17.373 ms, Emission 11.377 ms, Total 30.054 ms
+   Execution Time: 48.257 ms
+
+Step 2: Create GiST index on cafes table
+Created GiST index on geom column
+
+Step 3: Search cafes in rectangle WITH index
+
+Search cafes in rectangle WITH index
+Query: 
+    SELECT id, name,
+           ST_X(geom) as longitude,
+           ST_Y(geom) ...
+Execution time: 0.1936 seconds
+Rows returned: 16832
+
+EXPLAIN ANALYZE for search WITH index
+Execution Plan:
+   Bitmap Heap Scan on cafes  (cost=475.39..213126.64 rows=16917 width=34) (actual time=3.389..11.947 rows=16832 loops=1)
+     Filter: st_within(geom, '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
+     Heap Blocks: exact=935
+     ->  Bitmap Index Scan on idx_cafes_geom_gist  (cost=0.00..471.16 rows=16917 width=0) (actual time=1.025..1.026 rows=16832 loops=1)
+           Index Cond: (geom @ '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
+   Planning Time: 0.190 ms
+   JIT:
+     Functions: 4
+     Options: Inlining false, Optimization false, Expressions true, Deforming true
+     Timing: Generation 0.296 ms, Inlining 0.000 ms, Optimization 0.203 ms, Emission 2.062 ms, Total 2.561 ms
+   Execution Time: 12.692 ms
+
+Step 4: Performance comparison
+    Time WITHOUT index: 0.2765 seconds
+    Time WITH index: 0.1936 seconds
+    Speedup: 1.43x faster with index
+
+================================================================================
+TASK 2: KNN Search for nearest objects
+================================================================================
+
+Checking for GiST index...
+Found indexes:
+    idx_cafes_geom_gist
+
+Step 1: Find 3 nearest cafes to point (37.617, 55.751)
+
+KNN search for 3 nearest cafes
+Query: 
+    SELECT id, name,
+        ST_X(geom) as longitude,
+        ST_Y(geom) as lat...
+Execution time: 0.0024 seconds
+Rows returned: 3
+Nearest cafes:
+   1. Кафе_33 - Distance: 0.000397
+   2. Кафе_8203 - Distance: 0.001424
+   3. Кафе_43292 - Distance: 0.001449
+
+Step 2: EXPLAIN ANALYZE for KNN search
+
+EXPLAIN ANALYZE for KNN search
+Execution Plan:
+   Limit  (cost=0.28..39.90 rows=3 width=50) (actual time=0.106..0.113 rows=3 loops=1)
+     ->  Index Scan using idx_cafes_geom_gist on cafes  (cost=0.28..1320502.28 rows=100000 width=50) (actual time=0.106..0.112 rows=3 loops=1)
+           Order By: (geom <-> '0101000020E6100000E5D022DBF9CE4240E3A59BC420E04B40'::geometry)
+   Planning Time: 0.106 ms
+   Execution Time: 0.134 ms
+
+================================================================================
+TASK 3: Partial Indexes
+================================================================================
+
+Step 1: Create full spatial index on buildings
+Created full spatial index on buildings
+
+Step 2: Create partial spatial index for historic buildings
+Created partial spatial index for historic buildings
+
+Step 3: Compare index sizes
+Index size comparison:
+   full_index: 1624 kB
+   partial_index: 184 kB
+
+Step 4: Find historic buildings in center area
+
+Find historic buildings in center area
+Query: 
+    SELECT id, name, is_historic
+    FROM buildings
+    WHERE is_historic = tru...
+Execution time: 0.0074 seconds
+Rows returned: 636
+Found 636 historic buildings in center area
+
+EXPLAIN ANALYZE for historic buildings search
+Execution Plan:
+   Bitmap Heap Scan on buildings  (cost=21.29..9933.08 rows=664 width=23) (actual time=0.164..1.090 rows=636 loops=1)
+     Recheck Cond: is_historic
+     Filter: st_within(geom, '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
+     Heap Blocks: exact=571
+     ->  Bitmap Index Scan on idx_buildings_geom_historic  (cost=0.00..21.13 rows=664 width=0) (actual time=0.090..0.091 rows=636 loops=1)
+           Index Cond: (geom @ '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
+   Planning Time: 0.149 ms
+   Execution Time: 1.128 ms
+
+================================================================================
+ALL HOMEWORK TASKS COMPLETED!
+================================================================================
+
+SUMMARY:
+    Task 1 - Spatial Search: 0.2765s → 0.1936s
+     Speedup: 1.43x faster with index
+    Task 2 - KNN Search: Found 3 nearest cafes
+    Task 3 - Partial Indexes: Found 636 historic buildings
+    Index Sizes:
+     - full_index: 1624 kB
+     - partial_index: 184 kB
+Disconnected from database

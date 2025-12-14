@@ -1,79 +1,17 @@
 version: '3.8'
-
 services:
-  postgres-no-index:
-    image: postgres:16
-    container_name: postgres-no-index
+  postgis:
+    image: postgis/postgis:15-3.4
+    container_name: task4-postgis
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: geom_database
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 10_QWERTy
     ports:
-      - "5436:5432"
+      - "5433:5432"
     volumes:
-      - postgres_noindex_data:/var/lib/postgresql/data
-    networks:
-      - db-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
-  postgres-with-index:
-    image: postgres:16
-    container_name: postgres-with-index
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "5437:5432"
-    volumes:
-      - postgres_withindex_data:/var/lib/postgresql/data
-    networks:
-      - db-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
-  jupyter:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: jupyter-lab
-    ports:
-      - "8888:8888"
-    depends_on:
-      postgres-no-index:
-        condition: service_healthy
-      postgres-with-index:
-        condition: service_healthy
-    volumes:
-      - ./data:/code/data
-      - ./scripts:/code/scripts
-      - ./notebooks:/code/notebooks
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-    networks:
-      - db-network
-    command: >
-      sh -c "
-        echo 'Ожидание полной готовности PostgreSQL...' &&
-        sleep 30 &&
-        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=''
-      "
+      - postgis_data:/var/lib/postgresql/data
+    restart: unless-stopped
 
 volumes:
-  postgres_noindex_data:
-  postgres_withindex_data:
-
-networks:
-  db-network:
-    driver: bridge
+  postgis_data:
