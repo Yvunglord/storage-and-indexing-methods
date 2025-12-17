@@ -1,252 +1,338 @@
-from postgre_utils import db_connection, execute_query
+from postgre_utils import DatabaseConnection, QueryExecutor
+from config import DB_DSN, TABLE_NAME
 import time
-
-def run_query_with_timing(query: str, description: str):
-    """Run a query and measure execution time"""
-    print(f"\n{description}")
-    print(f"Query: {query[:80]}{'...' if len(query) > 80 else ''}")
-
-    start_time = time.time()
-    try:
-        results = execute_query(query)
-        end_time = time.time()
-        execution_time = end_time - start_time
-
-        print(f"Execution time: {execution_time:.4f} seconds")
-        print(f"Rows returned: {len(results)}")
-
-        return results, execution_time
-    except Exception as e:
-        print(f"Error: {e}")
-        return [], 0
+from typing import Dict, Any, Tuple, List
+import matplotlib.pyplot as plt
+from tabulate import tabulate
+import re
 
 
-def run_explain_analyze(query: str, description: str):
-    """Run EXPLAIN ANALYZE on query"""
-    print(f"\n{description}")
-    explain_query = f"EXPLAIN ANALYZE {query}"
+class QueryPlanAnalyzer:
+    def __init__(self, query_executor: QueryExecutor):
+        self.executor = query_executor
+        self.results = {}
 
-    try:
-        results = execute_query(explain_query)
-        print("Execution Plan:")
-        for row in results:
-            print(f"   {row['QUERY PLAN']}")
-    except Exception as e:
-        print(f"Error running EXPLAIN ANALYZE: {e}")
+    def create_test_table(self) -> Dict[str, Any]:
+        self.executor.execute_query(f"DROP TABLE IF EXISTS {TABLE_NAME};", fetch=False)
 
+        create_table_query = f"""
+        CREATE TABLE {TABLE_NAME} AS
+        SELECT
+            id,
+            CASE WHEN id % 1000 = 0 THEN 'rare' ELSE 'common' END AS category,
+            'data_' || id AS payload
+        FROM generate_series(1, 1000000) id;
+        """
+        self.executor.execute_query(create_table_query, fetch=False)
 
-def task1_spatial_search():
-    """TASK 1: Spatial Search with and without Index"""
-    print("\n" + "="*80)
-    print("TASK 1: Spatial Search with and without Index")
-    print("="*80)
+        self.executor.execute_query(
+            f"CREATE INDEX idx_category ON {TABLE_NAME}(category);", fetch=False)
 
-    # Drop indexes if they exist
-    print("Dropping indexes if they exist...")
-    drop_index_queries = [
-        "DROP INDEX IF EXISTS idx_cafes_geom_gist;"
-    ]
-    for q in drop_index_queries:
-        execute_query(q, fetch=False)
+        self.executor.execute_query(f"ANALYZE {TABLE_NAME};", fetch=False)
 
-    # Step 1: Search cafes in rectangle WITHOUT index
-    print("\nStep 1: Search cafes in rectangle WITHOUT index")
-    query1 = """
-    SELECT id, name,
-           ST_X(geom) as longitude,
-           ST_Y(geom) as latitude
-    FROM cafes
-    WHERE ST_Within(geom, ST_MakeEnvelope(37.5, 55.6, 37.7, 55.8, 4326));
-    """
-    results1, time1 = run_query_with_timing(query1, "Search cafes in rectangle WITHOUT index")
-    run_explain_analyze(query1, "EXPLAIN ANALYZE for search WITHOUT index")
+        distribution = self.analyze_distribution()
+        return distribution
 
-    # Step 2: Create GiST index
-    print("\nStep 2: Create GiST index on cafes table")
-    create_index_query = "CREATE INDEX idx_cafes_geom_gist ON cafes USING GIST(geom);"
-    execute_query(create_index_query, fetch=False)
-    print("Created GiST index on geom column")
+    def analyze_distribution(self) -> List[Dict[str, Any]]:
+        """Анализ распределения данных в таблице"""
+        query = f"""
+        SELECT category, COUNT(*) as count, 
+               ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM {TABLE_NAME}), 2) as percentage
+        FROM {TABLE_NAME} 
+        GROUP BY category 
+        ORDER BY category;
+        """
+        return self.executor.execute_query(query)
 
-    # Step 3: Search cafes in rectangle WITH index
-    print("\nStep 3: Search cafes in rectangle WITH index")
-    results2, time2 = run_query_with_timing(query1, "Search cafes in rectangle WITH index")
-    run_explain_analyze(query1, "EXPLAIN ANALYZE for search WITH index")
-
-    # Step 4: Compare performance
-    print("\nStep 4: Performance comparison")
-    print(f"    Time WITHOUT index: {time1:.4f} seconds")
-    print(f"    Time WITH index: {time2:.4f} seconds")
-    if time1 > 0 and time2 > 0:
-        speedup = time1 / time2
-        print(f"    Speedup: {speedup:.2f}x faster with index")
-
-    return time1, time2
-
-
-def task2_knn_search():
-    """TASK 2: KNN Search for nearest objects"""
-    print("\n" + "="*80)
-    print("TASK 2: KNN Search for nearest objects")
-    print("="*80)
-
-    # Check if GiST index exists
-    print("\nChecking for GiST index...")
-    check_index = """
-    SELECT indexname FROM pg_indexes
-    WHERE tablename = 'cafes' AND indexdef LIKE '%geom%';
-    """
-    indexes = execute_query(check_index)
-    if indexes:
-        print("Found indexes:")
-        for idx in indexes:
-            print(f"    {idx['indexname']}")
-    else:
-        print("No spatial index found. Creating one...")
-        execute_query("CREATE INDEX IF NOT EXISTS idx_cafes_geom_gist ON cafes USING GIST(geom);", fetch=False)
-
-    # Step 1: KNN search for 3 nearest cafes
-    print("\nStep 1: Find 3 nearest cafes to point (37.617, 55.751)")
-    query = """
-    SELECT id, name,
-        ST_X(geom) as longitude,
-        ST_Y(geom) as latitude,
-        ST_Distance(geom, ST_SetSRID(ST_MakePoint(37.617, 55.751), 4326)) as distance
-    FROM cafes
-    ORDER BY geom <-> ST_SetSRID(ST_MakePoint(37.617, 55.751), 4326)
-    LIMIT 3;
-    """
-    results, time_taken = run_query_with_timing(query, "KNN search for 3 nearest cafes")
-
-    # Display results
-    print("Nearest cafes:")
-    for i, cafe in enumerate(results, 1):
-        print(f"   {i}. {cafe['name']} - Distance: {cafe['distance']:.6f}")
-
-    # Step 2: EXPLAIN ANALYZE
-    print("\nStep 2: EXPLAIN ANALYZE for KNN search")
-    run_explain_analyze(query, "EXPLAIN ANALYZE for KNN search")
-
-    return results
-
-
-def task3_partial_indexes():
-    """TASK 3: Partial Indexes"""
-    print("\n" + "="*80)
-    print("TASK 3: Partial Indexes")
-    print("="*80)
-
-    # Drop existing indexes
-    execute_query("DROP INDEX IF EXISTS idx_buildings_geom_full;", fetch=False)
-    execute_query("DROP INDEX IF EXISTS idx_buildings_geom_historic;", fetch=False)
-
-    # Step 1: Create full spatial index
-    print("\nStep 1: Create full spatial index on buildings")
-    create_full_index = """
-    CREATE INDEX idx_buildings_geom_full ON buildings USING GIST(geom);
-    """
-    execute_query(create_full_index, fetch=False)
-    print("Created full spatial index on buildings")
-
-    # Step 2: Create partial spatial index for historic buildings
-    print("\nStep 2: Create partial spatial index for historic buildings")
-    create_partial_index = """
-    CREATE INDEX idx_buildings_geom_historic ON buildings USING GIST(geom)
-    WHERE is_historic = true;
-    """
-    execute_query(create_partial_index, fetch=False)
-    print("Created partial spatial index for historic buildings")
-
-    # Step 3: Compare index sizes
-    print("\nStep 3: Compare index sizes")
-    size_query = """
-    SELECT
-        'full_index' as index_type,
-        pg_size_pretty(pg_relation_size('idx_buildings_geom_full')) as index_size,
-        pg_relation_size('idx_buildings_geom_full') as size_bytes
-    UNION ALL
-    SELECT
-        'partial_index' as index_type,
-        pg_size_pretty(pg_relation_size('idx_buildings_geom_historic')) as index_size,
-        pg_relation_size('idx_buildings_geom_historic') as size_bytes
-    ORDER BY size_bytes DESC;
-    """
-    size_results = execute_query(size_query)
-    print("Index size comparison:")
-    for row in size_results:
-        print(f"   {row['index_type']}: {row['index_size']}")
-
-    # Step 4: Find historic buildings in center
-    print("\nStep 4: Find historic buildings in center area")
-    search_query = """
-    SELECT id, name, is_historic
-    FROM buildings
-    WHERE is_historic = true
-      AND ST_Within(geom, ST_MakeEnvelope(37.5, 55.6, 37.7, 55.8, 4326));
-    """
-    results, time_taken = run_query_with_timing(search_query, "Find historic buildings in center area")
-    print(f"Found {len(results)} historic buildings in center area")
-
-    # Show EXPLAIN ANALYZE
-    run_explain_analyze(search_query, "EXPLAIN ANALYZE for historic buildings search")
-
-    return size_results, results
-
-
-def main():
-    """Run all homework tasks in order"""
-    print("Spatial Indexing Homework Tasks")
-    print("="*80)
-    print("Running queries exactly as specified in homework.pdf")
-
-    try:
-        # Connect to database
-        db_connection.connect()
-        print("Connected to database")
-
-        # Check if tables exist
+    def explain_query(self, query: str, description: str = "") -> Dict[str, Any]:
+        """Выполнить EXPLAIN ANALYZE для запроса"""
+        print(f"\n {description}")
+        
+        explain_query = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) {query}"
+        
         try:
-            cafes_count = execute_query("SELECT COUNT(*) as count FROM cafes;")
-            print(f"Found {cafes_count[0]['count']} cafes in database")
+            results = self.executor.execute_query(explain_query)
+            plan_text = "\n".join([row['QUERY PLAN'] for row in results])
+            
+            print("План выполнения запроса:")
+            print(plan_text)
+            
+            metrics = self.extract_metrics(plan_text)
+            metrics['plan_text'] = plan_text
+            
+            print(f"Метод доступа: {metrics.get('plan_type', 'N/A')}")
+            print(f"Время выполнения: {metrics.get('execution_time', 'N/A')}")
+            print(f"Возвращено строк: {metrics.get('rows_returned', 'N/A')}")
+            if 'buffers' in metrics:
+                print(f"Буферы: {metrics['buffers']}")
+            
+            return metrics
+            
         except Exception as e:
-            print(f"Cafes table not found: {e}")
-            print("Please run 'python postgre_utils.py' first to create tables")
-            return
+            print(f"Ошибка выполнения EXPLAIN ANALYZE: {e}")
+            return {}
 
-        # TASK 1: Spatial Search with and without Index
-        time_without, time_with = task1_spatial_search()
+    def extract_metrics(self, plan_text: str) -> Dict[str, Any]:
+        """Извлечение метрик из текста плана выполнения"""
+        metrics = {
+            'plan_type': None,
+            'execution_time': None,
+            'rows_returned': None,
+            'buffers': None
+        }
+        
+        lines = plan_text.split('\n')
+        for line in lines:
+            if 'Index Scan' in line:
+                metrics['plan_type'] = 'Index Scan'
+            elif 'Seq Scan' in line:
+                metrics['plan_type'] = 'Seq Scan'
+            elif 'Bitmap Heap Scan' in line:
+                metrics['plan_type'] = 'Bitmap Heap Scan'
+            
+            if 'Execution Time' in line:
+                metrics['execution_time'] = line.strip()
+            
+            if 'rows=' in line and 'loops=' in line:
+                match = re.search(r'rows=(\d+)', line)
+                if match:
+                    metrics['rows_returned'] = int(match.group(1))
+            
+            if 'Buffers:' in line:
+                metrics['buffers'] = line.strip()
+        
+        return metrics
 
-        # TASK 2: KNN Search
-        knn_results = task2_knn_search()
+    def run_query_with_metrics(self, query: str, description: str) -> Tuple[List[Dict], float]:
+        """Выполнить запрос с измерением времени"""
+        print(f"\n{description}")
+        print(f"Запрос: {query[:100]}{'...' if len(query) > 100 else ''}")
+        
+        start_time = time.time()
+        try:
+            results = self.executor.execute_query(query)
+            end_time = time.time()
+            execution_time = end_time - start_time
+            
+            print(f"Время выполнения: {execution_time:.4f} секунд")
+            print(f"Возвращено строк: {len(results)}")
+            
+            return results, execution_time
+        except Exception as e:
+            print(f"Ошибка: {e}")
+            return [], 0
 
-        # TASK 3: Partial Indexes
-        size_results, historic_results = task3_partial_indexes()
+    def check_statistics(self) -> Tuple[List[Dict], List[Dict]]:
+        """Проверка статистик PostgreSQL"""
 
-        # Summary
+        stats_query = f"""
+        SELECT schemaname, tablename, attname, n_distinct, 
+               most_common_vals, most_common_freqs,
+               histogram_bounds
+        FROM pg_stats 
+        WHERE tablename = '{TABLE_NAME}' AND attname = 'category';
+        """
+        
+        stats = self.executor.execute_query(stats_query)
+        
+        if stats:
+            print("\nСтатистики для столбца 'category':")
+            for row in stats:
+                print(f"Таблица: {row['tablename']}")
+                print(f"Столбец: {row['attname']}")
+                print(f"n_distinct: {row['n_distinct']}")
+                print(f"most_common_vals: {row['most_common_vals']}")
+                print(f"most_common_freqs: {row['most_common_freqs']}")
+                if row['histogram_bounds']:
+                    print(f"histogram_bounds: {row['histogram_bounds'][:50]}...")
+        
+        real_dist = self.analyze_distribution()
+        print("\nРеальное распределение данных:")
+        print(tabulate(real_dist, headers='keys', tablefmt='grid'))
+        
+        return stats, real_dist
+
+
+class HomeworkTasks:
+    def __init__(self, analyzer: QueryPlanAnalyzer):
+        self.analyzer = analyzer
+        self.task_results = {}
+
+    def task_part1(self):
         print("\n" + "="*80)
-        print("ALL HOMEWORK TASKS COMPLETED!")
+        print("ЗАДАНИЕ 1: Базовый анализ с корректными статистиками")
         print("="*80)
+        
+        distribution = self.analyzer.create_test_table()
+        print("\nНачальное распределение данных:")
+        print(tabulate(distribution, headers='keys', tablefmt='grid'))
+        
+        query = f"SELECT * FROM {TABLE_NAME} WHERE category = 'rare';"
+        metrics = self.analyzer.explain_query(
+            query, 
+            "Анализ плана запроса для категории 'rare':"
+        )
+        
+        self.task_results['part1'] = {
+            'distribution': distribution,
+            'metrics': metrics,
+            'query': query
+        }
+        
+        print("1. Какой метод доступа к данным выбрал оптимизатор?")
+        print(f"   Ответ: {metrics.get('plan_type', 'Не определен')}")
+        print("\n2. Почему этот план можно считать оптимальным для данного запроса?")
+        print("   Ответ: Для редких значений ('rare' ~ 0.1% данных) Index Scan эффективен,")
+        print("   так как позволяет быстро найти нужные строки без сканирования всей таблицы.")
+        
+        return metrics
 
-        print("\nSUMMARY:")
-        print(f"    Task 1 - Spatial Search: {time_without:.4f}s → {time_with:.4f}s")
-        if time_without > 0 and time_with > 0:
-            speedup = time_without / time_with
-            print(f"     Speedup: {speedup:.2f}x faster with index")
-        print(f"    Task 2 - KNN Search: Found {len(knn_results)} nearest cafes")
-        print(f"    Task 3 - Partial Indexes: Found {len(historic_results)} historic buildings")
+    def task_part2(self):
+        print("\n" + "="*80)
+        print("ЗАДАНИЕ 2: Анализ с устаревшими статистиками")
+        print("="*80)
+        
+        print("\nИзменение распределения данных...")
+        
+        print("1. Создание неправильной статистики...")
+        update_queries = [
+            f"UPDATE {TABLE_NAME} SET category = 'rare' WHERE id % 10 != 0;",
+            f"UPDATE {TABLE_NAME} SET category = 'common' WHERE id % 10 = 0;"
+        ]
+        
+        for i, query in enumerate(update_queries, 1):
+            start_time = time.time()
+            self.analyzer.executor.execute_query(query, fetch=False)
+            elapsed = time.time() - start_time
+            print(f"   Запрос {i} выполнен за {elapsed:.2f} сек")
+        
+        print("\n2. Перестройка индекса и обновление статистик...")
+        self.analyzer.executor.execute_query("REINDEX INDEX idx_category;", fetch=False)
+        self.analyzer.executor.execute_query(f"ANALYZE {TABLE_NAME};", fetch=False)
+        
+        print("\n3. Изменение данных обратно (без ANALYZE)...")
+        update_back_queries = [
+            f"UPDATE {TABLE_NAME} SET category = 'rare' WHERE id % 10 = 0;",
+            f"UPDATE {TABLE_NAME} SET category = 'common' WHERE id % 10 != 0;"
+        ]
+        
+        for i, query in enumerate(update_back_queries, 1):
+            start_time = time.time()
+            self.analyzer.executor.execute_query(query, fetch=False)
+            elapsed = time.time() - start_time
+            print(f"   Запрос {i} выполнен за {elapsed:.2f} сек")
+        
+        real_dist = self.analyzer.analyze_distribution()
+        print("\nРеальное распределение после изменения:")
+        print(tabulate(real_dist, headers='keys', tablefmt='grid'))
+        
+        query = f"SELECT * FROM {TABLE_NAME} WHERE category = 'rare';"
+        metrics = self.analyzer.explain_query(
+            query,
+            "Анализ плана запроса для категории 'rare' (устаревшие статистики):"
+        )
+        
+        stats, current_dist = self.analyzer.check_statistics()
+        
+        self.task_results['part2'] = {
+            'distribution': real_dist,
+            'metrics': metrics,
+            'stats': stats,
+            'current_dist': current_dist,
+            'query': query
+        }
+        
+        print("1. Изменился ли план по сравнению с Частью 1?")
+        print(f"   Ответ: {'Да' if metrics.get('plan_type') != self.task_results['part1']['metrics'].get('plan_type') else 'Нет'}")
+        print("\n2. Остаётся ли план оптимальным?")
+        print("   Ответ: Нет, план не оптимален из-за устаревших статистик.")
+        print("\n3. Соответствуют ли отображаемые статистики реальному распределению данных?")
+        print(f"   Ответ: {'Нет' if stats and stats[0]['n_distinct'] != len(real_dist) else 'Да'}")
+        
+        return metrics
 
-        if size_results:
-            print("    Index Sizes:")
-            for row in size_results:
-                print(f"     - {row['index_type']}: {row['index_size']}")
+    def task_part3(self):
+        print("\n" + "="*80)
+        print("ЗАДАНИЕ 3: Исправление неоптимального плана")
+        print("="*80)
+        
+        print("\n Исправление: Обновление статистик (ANALYZE)...")
+        self.analyzer.executor.execute_query(f"ANALYZE {TABLE_NAME};", fetch=False)
+        
+        query = f"SELECT * FROM {TABLE_NAME} WHERE category = 'rare';"
+        metrics = self.analyzer.explain_query(
+            query,
+            "Анализ плана запроса после обновления статистик:"
+        )
+        
+        if 'part2' in self.task_results:
+            old_time = self.extract_time_ms(self.task_results['part2']['metrics'].get('execution_time', ''))
+            new_time = self.extract_time_ms(metrics.get('execution_time', ''))
+            
+            print(f" До исправления: {old_time:.2f} ms")
+            print(f" После исправления: {new_time:.2f} ms")
+            if old_time and new_time:
+                improvement = (old_time - new_time) / old_time * 100
+                print(f" Улучшение: {improvement:.1f}%")
+        
+        self.task_results['part3'] = {
+            'metrics': metrics,
+            'query': query
+        }
+        
+        return metrics
 
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        db_connection.disconnect()
-        print("Disconnected from database")
+    def bonus_task(self):
+        print("\n" + "="*80)
+        print("БОНУС-ЗАДАЧА: Когда индекс не используется")
+        print("="*80)
+        
+        print("1. Обновление данных (99.9% 'common')...")
+        self.analyzer.executor.execute_query(
+            f"UPDATE {TABLE_NAME} SET category = 'common' WHERE id <= 999000;", 
+            fetch=False
+        )
+        self.analyzer.executor.execute_query(
+            f"UPDATE {TABLE_NAME} SET category = 'rare' WHERE id > 999000;", 
+            fetch=False
+        )
+        self.analyzer.executor.execute_query(f"ANALYZE {TABLE_NAME};", fetch=False)
+        
+        dist = self.analyzer.analyze_distribution()
+        print("\nНовое распределение данных:")
+        print(tabulate(dist, headers='keys', tablefmt='grid'))
+        
+        print("\n Анализ запроса для 'common' (99.9% данных):")
+        query = f"SELECT * FROM {TABLE_NAME} WHERE category = 'common';"
+        metrics = self.analyzer.explain_query(query, "Поиск большинства записей:")
+        
+        print("\n Анализ запроса для 'rare' (0.1% данных):")
+        query_rare = f"SELECT * FROM {TABLE_NAME} WHERE category = 'rare';"
+        metrics_rare = self.analyzer.explain_query(query_rare, "Поиск редких записей:")
+        
+        print("1. Использовать частичные индексы для часто запрашиваемых подмножеств")
+        print("2. Рассмотреть кластеризацию таблицы по индексу")
+        print("3. Использовать покрывающие индексы (INCLUDE)")
+        print("4. Настроить параметры планировщика (random_page_cost, effective_cache_size)")
+        
+        return metrics, metrics_rare
+    
+    def extract_time_ms(self, time_str: str) -> float:
+        """Извлечение времени в миллисекундах из строки"""
+        if not time_str:
+            return 0.0
+        
+        match = re.search(r'(\d+\.\d+)\s*ms', time_str)
+        if match:
+            return float(match.group(1))
+        return 0.0
 
-
-if __name__ == "__main__":
-    main()
+    def run_all_tasks(self):        
+        try:
+            self.task_part1()
+            self.task_part2()
+            self.task_part3()
+            self.bonus_task()
+            
+        except Exception as e:
+            print(f"Ошибка: {e}")

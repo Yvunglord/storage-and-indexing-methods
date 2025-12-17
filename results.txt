@@ -1,148 +1,171 @@
-(venv) egor@DESKTOP-JIO1GM9:~/education/python/storage-and-indexing-methods$ python3 ./homework_tasks.py
-Spatial Indexing Homework Tasks
 ================================================================================
-Running queries exactly as specified in homework.pdf
-Connected to database
-Found 100000 cafes in database
-
-================================================================================
-TASK 1: Spatial Search with and without Index
-================================================================================
-Dropping indexes if they exist...
-
-Step 1: Search cafes in rectangle WITHOUT index
-
-Search cafes in rectangle WITHOUT index
-Query: 
-    SELECT id, name,
-           ST_X(geom) as longitude,
-           ST_Y(geom) ...
-Execution time: 0.2765 seconds
-Rows returned: 16832
-
-EXPLAIN ANALYZE for search WITHOUT index
-Execution Plan:
-   Seq Scan on cafes  (cost=0.00..1250680.93 rows=16899 width=34) (actual time=29.839..47.587 rows=16832 loops=1)
-     Filter: st_within(geom, '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
-     Rows Removed by Filter: 83168
-   Planning Time: 0.105 ms
-   JIT:
-     Functions: 4
-     Options: Inlining true, Optimization true, Expressions true, Deforming true
-     Timing: Generation 0.246 ms, Inlining 1.057 ms, Optimization 17.373 ms, Emission 11.377 ms, Total 30.054 ms
-   Execution Time: 48.257 ms
-
-Step 2: Create GiST index on cafes table
-Created GiST index on geom column
-
-Step 3: Search cafes in rectangle WITH index
-
-Search cafes in rectangle WITH index
-Query: 
-    SELECT id, name,
-           ST_X(geom) as longitude,
-           ST_Y(geom) ...
-Execution time: 0.1936 seconds
-Rows returned: 16832
-
-EXPLAIN ANALYZE for search WITH index
-Execution Plan:
-   Bitmap Heap Scan on cafes  (cost=475.39..213126.64 rows=16917 width=34) (actual time=3.389..11.947 rows=16832 loops=1)
-     Filter: st_within(geom, '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
-     Heap Blocks: exact=935
-     ->  Bitmap Index Scan on idx_cafes_geom_gist  (cost=0.00..471.16 rows=16917 width=0) (actual time=1.025..1.026 rows=16832 loops=1)
-           Index Cond: (geom @ '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
-   Planning Time: 0.190 ms
-   JIT:
-     Functions: 4
-     Options: Inlining false, Optimization false, Expressions true, Deforming true
-     Timing: Generation 0.296 ms, Inlining 0.000 ms, Optimization 0.203 ms, Emission 2.062 ms, Total 2.561 ms
-   Execution Time: 12.692 ms
-
-Step 4: Performance comparison
-    Time WITHOUT index: 0.2765 seconds
-    Time WITH index: 0.1936 seconds
-    Speedup: 1.43x faster with index
-
-================================================================================
-TASK 2: KNN Search for nearest objects
+ЗАДАНИЕ 1: Базовый анализ с корректными статистиками
 ================================================================================
 
-Checking for GiST index...
-Found indexes:
-    idx_cafes_geom_gist
+Начальное распределение данных:
++------------+---------+--------------+
+| category   |   count |   percentage |
++============+=========+==============+
+| common     |  999000 |         99.9 |
++------------+---------+--------------+
+| rare       |    1000 |          0.1 |
++------------+---------+--------------+
 
-Step 1: Find 3 nearest cafes to point (37.617, 55.751)
+ Анализ плана запроса для категории 'rare':
+План выполнения запроса:
+Index Scan using idx_category on test_data  (cost=0.42..58.44 rows=1200 width=21) (actual time=0.030..2.238 rows=1000 loops=1)
+  Index Cond: (category = 'rare'::text)
+  Buffers: shared hit=363 read=640
+Planning:
+  Buffers: shared hit=6
+Planning Time: 0.065 ms
+Execution Time: 2.290 ms
+Метод доступа: Index Scan
+Время выполнения: Execution Time: 2.290 ms
+Возвращено строк: 1200
+Буферы: Buffers: shared hit=6
+1. Какой метод доступа к данным выбрал оптимизатор?
+   Ответ: Index Scan
 
-KNN search for 3 nearest cafes
-Query: 
-    SELECT id, name,
-        ST_X(geom) as longitude,
-        ST_Y(geom) as lat...
-Execution time: 0.0024 seconds
-Rows returned: 3
-Nearest cafes:
-   1. Кафе_33 - Distance: 0.000397
-   2. Кафе_8203 - Distance: 0.001424
-   3. Кафе_43292 - Distance: 0.001449
-
-Step 2: EXPLAIN ANALYZE for KNN search
-
-EXPLAIN ANALYZE for KNN search
-Execution Plan:
-   Limit  (cost=0.28..39.90 rows=3 width=50) (actual time=0.106..0.113 rows=3 loops=1)
-     ->  Index Scan using idx_cafes_geom_gist on cafes  (cost=0.28..1320502.28 rows=100000 width=50) (actual time=0.106..0.112 rows=3 loops=1)
-           Order By: (geom <-> '0101000020E6100000E5D022DBF9CE4240E3A59BC420E04B40'::geometry)
-   Planning Time: 0.106 ms
-   Execution Time: 0.134 ms
-
-================================================================================
-TASK 3: Partial Indexes
-================================================================================
-
-Step 1: Create full spatial index on buildings
-Created full spatial index on buildings
-
-Step 2: Create partial spatial index for historic buildings
-Created partial spatial index for historic buildings
-
-Step 3: Compare index sizes
-Index size comparison:
-   full_index: 1624 kB
-   partial_index: 184 kB
-
-Step 4: Find historic buildings in center area
-
-Find historic buildings in center area
-Query: 
-    SELECT id, name, is_historic
-    FROM buildings
-    WHERE is_historic = tru...
-Execution time: 0.0074 seconds
-Rows returned: 636
-Found 636 historic buildings in center area
-
-EXPLAIN ANALYZE for historic buildings search
-Execution Plan:
-   Bitmap Heap Scan on buildings  (cost=21.29..9933.08 rows=664 width=23) (actual time=0.164..1.090 rows=636 loops=1)
-     Recheck Cond: is_historic
-     Filter: st_within(geom, '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
-     Heap Blocks: exact=571
-     ->  Bitmap Index Scan on idx_buildings_geom_historic  (cost=0.00..21.13 rows=664 width=0) (actual time=0.090..0.091 rows=636 loops=1)
-           Index Cond: (geom @ '0103000020E610000001000000050000000000000000C04240CDCCCCCCCCCC4B400000000000C042406666666666E64B409A99999999D942406666666666E64B409A99999999D94240CDCCCCCCCCCC4B400000000000C04240CDCCCCCCCCCC4B40'::geometry)
-   Planning Time: 0.149 ms
-   Execution Time: 1.128 ms
+2. Почему этот план можно считать оптимальным для данного запроса?
+   Ответ: Для редких значений ('rare' ~ 0.1% данных) Index Scan эффективен,
+   так как позволяет быстро найти нужные строки без сканирования всей таблицы.
 
 ================================================================================
-ALL HOMEWORK TASKS COMPLETED!
+ЗАДАНИЕ 2: Анализ с устаревшими статистиками
 ================================================================================
 
-SUMMARY:
-    Task 1 - Spatial Search: 0.2765s → 0.1936s
-     Speedup: 1.43x faster with index
-    Task 2 - KNN Search: Found 3 nearest cafes
-    Task 3 - Partial Indexes: Found 636 historic buildings
-    Index Sizes:
-     - full_index: 1624 kB
-     - partial_index: 184 kB
-Disconnected from database
+Изменение распределения данных...
+1. Создание неправильной статистики...
+   Запрос 1 выполнен за 1.69 сек
+   Запрос 2 выполнен за 0.16 сек
+
+2. Перестройка индекса и обновление статистик...
+
+3. Изменение данных обратно (без ANALYZE)...
+   Запрос 1 выполнен за 0.31 сек
+   Запрос 2 выполнен за 2.30 сек
+
+Реальное распределение после изменения:
++------------+---------+--------------+
+| category   |   count |   percentage |
++============+=========+==============+
+| common     |  900000 |           90 |
++------------+---------+--------------+
+| rare       |  100000 |           10 |
++------------+---------+--------------+
+
+ Анализ плана запроса для категории 'rare' (устаревшие статистики):
+План выполнения запроса:
+Seq Scan on test_data  (cost=0.00..36269.88 rows=1322474 width=20) (actual time=0.005..57.028 rows=100000 loops=1)
+  Filter: (category = 'rare'::text)
+  Rows Removed by Filter: 900000
+  Buffers: shared hit=15300 read=2564
+Planning:
+  Buffers: shared hit=6 dirtied=1
+Planning Time: 0.084 ms
+Execution Time: 59.463 ms
+Метод доступа: Seq Scan
+Время выполнения: Execution Time: 59.463 ms
+Возвращено строк: 1322474
+Буферы: Buffers: shared hit=6 dirtied=1
+
+Статистики для столбца 'category':
+Таблица: test_data
+Столбец: category
+n_distinct: 2.0
+most_common_vals: {rare,common}
+most_common_freqs: [0.89813334, 0.10186667]
+
+Реальное распределение данных:
++------------+---------+--------------+
+| category   |   count |   percentage |
++============+=========+==============+
+| common     |  900000 |           90 |
++------------+---------+--------------+
+| rare       |  100000 |           10 |
++------------+---------+--------------+
+1. Изменился ли план по сравнению с Частью 1?
+   Ответ: Да
+
+2. Остаётся ли план оптимальным?
+   Ответ: Нет, план не оптимален из-за устаревших статистик.
+
+3. Соответствуют ли отображаемые статистики реальному распределению данных?
+   Ответ: Да
+
+================================================================================
+ЗАДАНИЕ 3: Исправление неоптимального плана
+================================================================================
+
+ Исправление: Обновление статистик (ANALYZE)...
+
+ Анализ плана запроса после обновления статистик:
+План выполнения запроса:
+Bitmap Heap Scan on test_data  (cost=1483.83..20617.83 rows=101600 width=21) (actual time=18.210..49.651 rows=100000 loops=1)
+  Recheck Cond: (category = 'rare'::text)
+  Heap Blocks: exact=12103
+  Buffers: shared hit=9103 read=3910 written=3784
+  ->  Bitmap Index Scan on idx_category  (cost=0.00..1458.42 rows=101600 width=0) (actual time=16.959..16.960 rows=1000000 loops=1)
+        Index Cond: (category = 'rare'::text)
+        Buffers: shared hit=153 read=757 written=681
+Planning:
+  Buffers: shared hit=19 read=1 written=1
+Planning Time: 0.120 ms
+Execution Time: 52.120 ms
+Метод доступа: Index Scan
+Время выполнения: Execution Time: 52.120 ms
+Возвращено строк: 101600
+Буферы: Buffers: shared hit=19 read=1 written=1
+ До исправления: 59.46 ms
+ После исправления: 52.12 ms
+ Улучшение: 12.3%
+
+================================================================================
+БОНУС-ЗАДАЧА: Когда индекс не используется
+================================================================================
+1. Обновление данных (99.9% 'common')...
+
+Новое распределение данных:
++------------+---------+--------------+
+| category   |   count |   percentage |
++============+=========+==============+
+| common     |  999000 |         99.9 |
++------------+---------+--------------+
+| rare       |    1000 |          0.1 |
++------------+---------+--------------+
+
+ Анализ запроса для 'common' (99.9% данных):
+
+ Поиск большинства записей:
+План выполнения запроса:
+Seq Scan on test_data  (cost=0.00..36096.00 rows=998567 width=21) (actual time=0.005..86.424 rows=999000 loops=1)
+  Filter: (category = 'common'::text)
+  Rows Removed by Filter: 1000
+  Buffers: shared hit=15292 read=8304 written=12
+Planning:
+  Buffers: shared hit=6
+Planning Time: 0.075 ms
+Execution Time: 109.856 ms
+Метод доступа: Seq Scan
+Время выполнения: Execution Time: 109.856 ms
+Возвращено строк: 998567
+Буферы: Buffers: shared hit=6
+
+ Анализ запроса для 'rare' (0.1% данных):
+
+ Поиск редких записей:
+План выполнения запроса:
+Index Scan using idx_category on test_data  (cost=0.42..94.53 rows=1433 width=21) (actual time=21.867..78.004 rows=1000 loops=1)
+  Index Cond: (category = 'rare'::text)
+  Buffers: shared hit=2877 read=11052 dirtied=905 written=9277
+Planning Time: 0.059 ms
+Execution Time: 78.043 ms
+Метод доступа: Index Scan
+Время выполнения: Execution Time: 78.043 ms
+Возвращено строк: 1433
+Буферы: Buffers: shared hit=2877 read=11052 dirtied=905 written=9277
+1. Использовать частичные индексы для часто запрашиваемых подмножеств
+2. Рассмотреть кластеризацию таблицы по индексу
+3. Использовать покрывающие индексы (INCLUDE)
+4. Настроить параметры планировщика (random_page_cost, effective_cache_size)
